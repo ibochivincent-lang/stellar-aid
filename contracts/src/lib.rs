@@ -7,7 +7,9 @@
 //! Amounts move through a Confidential Token wrapper in production; this core
 //! contract enforces all *spendability rules* on-chain.
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, token, Address, Env, Symbol};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, token, Address, Env, Symbol,
+};
 
 #[contracttype]
 pub enum DataKey {
@@ -64,7 +66,8 @@ impl AidVoucher {
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Token, &token);
-        env.events().publish((Symbol::new(&env, "initialize"),), (admin,));
+        env.events()
+            .publish((Symbol::new(&env, "initialize"),), (admin,));
     }
 
     fn admin(env: &Env) -> Address {
@@ -97,7 +100,12 @@ impl AidVoucher {
     // Merchant whitelist
     // ------------------------------------------------------------------
 
-    pub fn set_merchant(env: Env, caller: Address, merchant: Address, active: bool) -> Result<(), VoucherError> {
+    pub fn set_merchant(
+        env: Env,
+        caller: Address,
+        merchant: Address,
+        active: bool,
+    ) -> Result<(), VoucherError> {
         Self::require_admin(&env, &caller)?;
         env.storage()
             .instance()
@@ -219,8 +227,13 @@ impl AidVoucher {
     ) -> Result<(), VoucherError> {
         // The spender must cryptographically prove they are the authorized party.
         spender.require_auth();
-        let voucher =
-            Self::can_redeem(env.clone(), voucher_id, spender.clone(), merchant.clone(), amount)?;
+        let voucher = Self::can_redeem(
+            env.clone(),
+            voucher_id,
+            spender.clone(),
+            merchant.clone(),
+            amount,
+        )?;
         let spent = voucher.spent + amount;
 
         let mut updated = voucher.clone();
@@ -263,7 +276,8 @@ impl AidVoucher {
         env.storage()
             .instance()
             .remove(&DataKey::Voucher(voucher_id));
-        env.events().publish((Symbol::new(&env, "burned"), voucher_id), (remaining,));
+        env.events()
+            .publish((Symbol::new(&env, "burned"), voucher_id), (remaining,));
         Ok(())
     }
 
@@ -300,7 +314,12 @@ impl AidVoucher {
 
     /// Admin freezes a voucher. In production this is wired into Stellar
     /// Quorum Freeze (Protocol 26 CAP-77) incident response.
-    pub fn set_frozen(env: Env, caller: Address, voucher_id: u32, frozen: bool) -> Result<(), VoucherError> {
+    pub fn set_frozen(
+        env: Env,
+        caller: Address,
+        voucher_id: u32,
+        frozen: bool,
+    ) -> Result<(), VoucherError> {
         Self::require_admin(&env, &caller)?;
         let mut voucher: Voucher = env
             .storage()
@@ -311,7 +330,8 @@ impl AidVoucher {
         env.storage()
             .instance()
             .set(&DataKey::Voucher(voucher_id), &voucher);
-        env.events().publish((Symbol::new(&env, "frozen"), voucher_id), (frozen,));
+        env.events()
+            .publish((Symbol::new(&env, "frozen"), voucher_id), (frozen,));
         Ok(())
     }
 
@@ -416,7 +436,12 @@ mod test {
         let merchant = Address::generate(&env);
         client.set_merchant(&admin, &merchant, &true);
 
-        seed_voucher(&env, &contract_id, 7, &sample_voucher(&env, recipient.clone(), 100, 0));
+        seed_voucher(
+            &env,
+            &contract_id,
+            7,
+            &sample_voucher(&env, recipient.clone(), 100, 0),
+        );
 
         // Valid spend passes the guards.
         let v = client.can_redeem(&7, &recipient, &merchant, &60);
@@ -448,7 +473,12 @@ mod test {
         let (_, _, contract_id, client) = setup(&env);
         let recipient = Address::generate(&env);
 
-        seed_voucher(&env, &contract_id, 9, &sample_voucher(&env, recipient, 100, 0));
+        seed_voucher(
+            &env,
+            &contract_id,
+            9,
+            &sample_voucher(&env, recipient, 100, 0),
+        );
 
         let res = client.try_burn_expired(&9);
         assert_eq!(res.unwrap_err().unwrap(), VoucherError::Expired);
@@ -463,7 +493,12 @@ mod test {
         let merchant = Address::generate(&env);
         client.set_merchant(&admin, &merchant, &true);
 
-        seed_voucher(&env, &contract_id, 10, &sample_voucher(&env, recipient.clone(), 100, 0));
+        seed_voucher(
+            &env,
+            &contract_id,
+            10,
+            &sample_voucher(&env, recipient.clone(), 100, 0),
+        );
 
         // Zero and negative amounts must not be able to shrink `spent` or
         // otherwise slip past the balance check.
