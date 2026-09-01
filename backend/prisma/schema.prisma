@@ -1,0 +1,106 @@
+// Prisma schema — StellarAID backend read model.
+// On-chain state (balances, spend authorization) is the source of truth;
+// this database is an index/read-model for KYC, merchants and programs.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CITIZEN
+  MERCHANT
+  ADMIN
+  AUDITOR
+}
+
+model User {
+  id                  String    @id @default(cuid())
+  wallet              String?   @unique
+  passkeyCredentialId String?   @unique
+  role                Role      @default(CITIZEN)
+  country             String?
+  region              String?
+  kycVerifiedAt       DateTime?
+  createdAt           DateTime  @default(now())
+
+  vouchers      Voucher[]         @relation("recipient")
+  redemptions   Redemption[]      @relation("spender")
+  delegatedVouchers VoucherDelegate[]
+}
+
+model Merchant {
+  id        String   @id @default(cuid())
+  wallet    String   @unique
+  name      String
+  region    String
+  active    Boolean  @default(true)
+  onCreate  DateTime @default(now())
+}
+
+model AidProgram {
+  id          String   @id @default(cuid())
+  name        String
+  currency    String   @default("USDC")
+  totalBudget BigInt
+  spentBudget BigInt   @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+model Voucher {
+  id          String  @id @default(cuid())
+  voucherId   Int
+  program     AidProgram @relation(fields: [programId], references: [id])
+  programId   String
+  recipient   User      @relation("recipient", fields: [recipientId], references: [id])
+  recipientId String
+  amount      BigInt
+  spent       BigInt   @default(0)
+  category    String
+  region      String
+  expiresAt   DateTime
+  onChainStatus String @default("ISSUED") // ISSUED | ACTIVE | SPENT | BURNED | FROZEN
+  createdAt   DateTime  @default(now())
+
+  redemptions Redemption[]
+  delegates   VoucherDelegate[]
+
+  @@unique([programId, voucherId])
+}
+
+model Redemption {
+  id        String   @id @default(cuid())
+  voucher   Voucher  @relation(fields: [voucherId], references: [id])
+  voucherId String
+  spender   User     @relation("spender", fields: [spenderId], references: [id])
+  spenderId String
+  merchant  Merchant @relation(fields: [merchantId], references: [id])
+  merchantId String
+  amount    BigInt
+  txHash    String?  // on-chain tx, set after ledger confirmation
+  createdAt DateTime @default(now())
+}
+
+model VoucherDelegate {
+  id         String  @id @default(cuid())
+  voucher    Voucher @relation(fields: [voucherId], references: [id])
+  voucherId  String
+  delegate   User    @relation(fields: [delegateId], references: [id])
+  delegateId String
+  active     Boolean @default(true)
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actor     String
+  action    String
+  entityType String
+  entityId  String
+  metadata  String?
+  createdAt DateTime @default(now())
+}

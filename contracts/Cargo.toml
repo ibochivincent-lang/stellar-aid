@@ -1,0 +1,24 @@
+[package]
+name = "stellar-aid"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+soroban-sdk = "26.0.1"
+
+[dev-dependencies]
+soroban-sdk = { version = "26.0.1", features = ["testutils"] }
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+lto = true
+codegen-units = 1
+
+[features]
+testutils = ["soroban-sdk/testutils"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[workspace]
