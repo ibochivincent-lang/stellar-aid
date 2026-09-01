@@ -14,8 +14,7 @@
 //! contract enforces all *spendability rules* on-chain.
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
-    Symbol,
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env, Symbol,
 };
 
 /// Contract events. Structured with `#[contractevent]` (soroban-sdk 26+) rather
@@ -406,11 +405,7 @@ impl AidVoucher {
         env.storage()
             .instance()
             .set(&DataKey::Voucher(voucher_id), &voucher);
-        FrozenEvent {
-            voucher_id,
-            frozen,
-        }
-        .publish(&env);
+        FrozenEvent { voucher_id, frozen }.publish(&env);
         Ok(())
     }
 
