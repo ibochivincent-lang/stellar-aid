@@ -49,14 +49,7 @@ jobs:
         with:
           workspaces: contracts
 
-      # Not yet verified against this codebase (no Rust toolchain was available
-      # to check formatting/lints before this workflow was added) — kept
-      # non-blocking until a first green run confirms they pass, then should
-      # be made blocking like the steps below.
       - run: cargo fmt --check
-        continue-on-error: true
       - run: cargo clippy --all-targets -- -D warnings
-        continue-on-error: true
-
       - run: cargo test
       - run: cargo build --target wasm32v1-none --release
