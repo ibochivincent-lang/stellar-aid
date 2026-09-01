@@ -1,0 +1,15 @@
+{
+  "name": "@stellar-aid/use-events",
+  "version": "0.1.0",
+  "private": true,
+  "description": "React hooks for stellar-aid's live voucher event stream (SSE). Scoped analog of Orbital's pulse-notify, for whenever the citizen/merchant/auditor frontend (Wave issue: Frontend) lands.",
+  "main": "src/index.tsx",
+  "types": "src/index.tsx",
+  "peerDependencies": {
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.31",
+    "typescript": "5.6"
+  }
+}

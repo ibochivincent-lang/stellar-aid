@@ -1,22 +1,9 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { AuditLogService } from '../audit/audit-log.service';
 import { PrismaService } from '../common/prisma.service';
 import { StellarService } from '../stellar/stellar.service';
-
-export interface IssueVoucherDto {
-  recipientWallet: string;
-  voucherId: number;
-  amount: string; // raw units
-  category: string;
-  region: string;
-  expiresAt: number; // ledger timestamp (seconds)
-  programId?: string;
-}
-
-export interface SpendVoucherDto {
-  spenderPublicKey: string;
-  merchantWallet: string;
-  amount: string;
-}
+import { IssueVoucherDto } from './dto/issue-voucher.dto';
+import { SpendVoucherDto } from './dto/spend-voucher.dto';
 
 /**
  * Voucher service.
@@ -31,6 +18,7 @@ export class VouchersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stellar: StellarService,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   get contractId(): string {
@@ -60,15 +48,7 @@ export class VouchersService {
     const resp = await this.stellar.signAndSubmitServerSide(
       this.contractId,
       'issue_voucher',
-      [
-        adminPublicKey,
-        recipientWallet,
-        dto.voucherId,
-        BigInt(dto.amount),
-        dto.category,
-        dto.region,
-        dto.expiresAt,
-      ],
+      [adminPublicKey, recipientWallet, dto.voucherId, BigInt(dto.amount), dto.category, dto.region, dto.expiresAt],
     );
     // `sendTransaction`'s status is 'PENDING' | 'DUPLICATE' | 'TRY_AGAIN_LATER' | 'ERROR'
     // — 'SUCCESS' only ever appears in `getTransaction`'s response, once the
@@ -83,19 +63,14 @@ export class VouchersService {
       try {
         await this.stellar.awaitTransaction(resp.hash);
       } catch (e) {
-        this.logger.warn(`ledger reconcile pending: ${String(e)}`);
+        this.logger.warn(`ledger reconcile pending: ${e}`);
       }
     }
 
-    return this.prisma.voucher.create({
+    const voucher = await this.prisma.voucher.create({
       data: {
         voucherId: dto.voucherId,
-        recipient: {
-          connectOrCreate: {
-            where: { wallet: recipientWallet },
-            create: { wallet: recipientWallet },
-          },
-        },
+        recipient: { connectOrCreate: { where: { wallet: recipientWallet }, create: { wallet: recipientWallet } } },
         program: {
           connectOrCreate: {
             where: { id: dto.programId ?? 'default-program' },
@@ -112,6 +87,23 @@ export class VouchersService {
         expiresAt: new Date(dto.expiresAt * 1000),
       },
     });
+
+    await this.auditLog.record({
+      actor: adminPublicKey,
+      action: 'voucher.issue',
+      entityType: 'Voucher',
+      entityId: voucher.id,
+      metadata: {
+        voucherId: dto.voucherId,
+        recipientWallet,
+        amount: dto.amount,
+        category: dto.category,
+        region: dto.region,
+        txHash: resp.hash,
+      },
+    });
+
+    return voucher;
   }
 
   /**
@@ -136,10 +128,14 @@ export class VouchersService {
 
   /** Server-side: flywheel burn of expired vouchers. */
   async burnExpired(voucherId: number) {
-    return this.stellar.signAndSubmitServerSide(
-      this.contractId,
-      'burn_expired',
-      [voucherId],
-    );
+    const resp = await this.stellar.signAndSubmitServerSide(this.contractId, 'burn_expired', [voucherId]);
+    await this.auditLog.record({
+      actor: this.stellar.treasuryPublicKey,
+      action: 'voucher.burn',
+      entityType: 'Voucher',
+      entityId: String(voucherId),
+      metadata: { txHash: resp.hash, status: resp.status },
+    });
+    return resp;
   }
 }

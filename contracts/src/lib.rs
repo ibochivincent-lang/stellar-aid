@@ -14,7 +14,8 @@
 //! contract enforces all *spendability rules* on-chain.
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env, Symbol,
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
+    Symbol, Vec,
 };
 
 /// Contract events. Structured with `#[contractevent]` (soroban-sdk 26+) rather
@@ -32,6 +33,12 @@ pub struct InitializeEvent {
 pub struct MerchantEvent {
     pub merchant: Address,
     pub active: bool,
+}
+
+#[contractevent(topics = ["merchant_scope"])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MerchantScopeEvent {
+    pub merchant: Address,
 }
 
 #[contractevent(topics = ["issued"])]
@@ -89,6 +96,18 @@ pub enum DataKey {
 
 #[derive(Clone, Debug, PartialEq)]
 #[contracttype]
+pub struct MerchantProfile {
+    pub active: bool,
+    /// Categories this merchant may redeem vouchers for. Empty = unrestricted
+    /// (matches every voucher's category) — the safe default when a merchant
+    /// is first registered with no scope configured yet.
+    pub categories: Vec<Symbol>,
+    /// Regions this merchant may redeem vouchers in. Empty = unrestricted.
+    pub regions: Vec<Symbol>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+#[contracttype]
 pub struct Voucher {
     pub recipient: Address,
     pub amount: i128,
@@ -118,6 +137,9 @@ pub enum VoucherError {
     MerchantInactive = 7,
     AlreadyTaken = 8,
     InvalidAmount = 9,
+    AlreadyInitialized = 10,
+    CategoryNotApproved = 11,
+    RegionNotApproved = 12,
 }
 
 #[contract]
@@ -129,11 +151,18 @@ impl AidVoucher {
     // Admin bootstrap
     // ------------------------------------------------------------------
 
-    pub fn initialize(env: Env, admin: Address, token: Address) {
+    pub fn initialize(env: Env, admin: Address, token: Address) -> Result<(), VoucherError> {
         admin.require_auth();
+        // Without this guard, `initialize` could be called again later to
+        // silently re-point the contract at a different admin or token
+        // address — indistinguishable from a normal bootstrap event.
+        if env.storage().instance().has(&DataKey::Admin) {
+            return Err(VoucherError::AlreadyInitialized);
+        }
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Token, &token);
         InitializeEvent { admin }.publish(&env);
+        Ok(())
     }
 
     fn admin(env: &Env) -> Address {
@@ -166,6 +195,17 @@ impl AidVoucher {
     // Merchant whitelist
     // ------------------------------------------------------------------
 
+    fn merchant_profile(env: &Env, merchant: &Address) -> Option<MerchantProfile> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Merchant(merchant.clone()))
+    }
+
+    /// Registers a merchant (if new) or flips its active flag. A newly
+    /// registered merchant starts with an unrestricted scope (matches every
+    /// category/region) — call `set_merchant_scope` to narrow it. Keeping
+    /// registration and scoping separate means turning a merchant on/off
+    /// never has to know or repeat its existing category/region list.
     pub fn set_merchant(
         env: Env,
         caller: Address,
@@ -173,18 +213,50 @@ impl AidVoucher {
         active: bool,
     ) -> Result<(), VoucherError> {
         Self::require_admin(&env, &caller)?;
+        let mut profile = Self::merchant_profile(&env, &merchant).unwrap_or(MerchantProfile {
+            active: false,
+            categories: Vec::new(&env),
+            regions: Vec::new(&env),
+        });
+        profile.active = active;
         env.storage()
             .instance()
-            .set(&DataKey::Merchant(merchant.clone()), &active);
+            .set(&DataKey::Merchant(merchant.clone()), &profile);
         MerchantEvent { merchant, active }.publish(&env);
         Ok(())
     }
 
-    pub fn is_merchant(env: Env, merchant: Address) -> bool {
+    /// Sets which categories/regions a merchant may redeem vouchers for.
+    /// Pass an empty `Vec` for either to leave that dimension unrestricted.
+    /// This is what actually enforces the "approved goods, within a region"
+    /// half of the voucher pitch — `set_merchant` alone only gates whether a
+    /// merchant can transact at all, not what they're scoped to.
+    pub fn set_merchant_scope(
+        env: Env,
+        caller: Address,
+        merchant: Address,
+        categories: Vec<Symbol>,
+        regions: Vec<Symbol>,
+    ) -> Result<(), VoucherError> {
+        Self::require_admin(&env, &caller)?;
+        let mut profile = Self::merchant_profile(&env, &merchant).ok_or(VoucherError::NotFound)?;
+        profile.categories = categories;
+        profile.regions = regions;
         env.storage()
             .instance()
-            .get(&DataKey::Merchant(merchant))
+            .set(&DataKey::Merchant(merchant.clone()), &profile);
+        MerchantScopeEvent { merchant }.publish(&env);
+        Ok(())
+    }
+
+    pub fn is_merchant(env: Env, merchant: Address) -> bool {
+        Self::merchant_profile(&env, &merchant)
+            .map(|p| p.active)
             .unwrap_or(false)
+    }
+
+    pub fn merchant_info(env: Env, merchant: Address) -> Option<MerchantProfile> {
+        Self::merchant_profile(&env, &merchant)
     }
 
     // ------------------------------------------------------------------
@@ -272,8 +344,16 @@ impl AidVoucher {
             return Err(VoucherError::NotAuthorized);
         }
 
-        if !Self::is_merchant(env.clone(), merchant.clone()) {
+        let profile =
+            Self::merchant_profile(&env, &merchant).ok_or(VoucherError::MerchantInactive)?;
+        if !profile.active {
             return Err(VoucherError::MerchantInactive);
+        }
+        if !profile.categories.is_empty() && !profile.categories.contains(&voucher.category) {
+            return Err(VoucherError::CategoryNotApproved);
+        }
+        if !profile.regions.is_empty() && !profile.regions.contains(&voucher.region) {
+            return Err(VoucherError::RegionNotApproved);
         }
         if env.ledger().timestamp() > voucher.expires_at {
             return Err(VoucherError::Expired);
@@ -602,5 +682,84 @@ mod test {
         client.set_frozen(&admin, &11, &false);
         let res = client.try_can_redeem(&11, &recipient, &merchant, &1);
         assert_eq!(res.unwrap_err().unwrap(), VoucherError::Frozen);
+    }
+
+    #[test]
+    fn reinitializing_is_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (admin, token, _contract_id, client) = setup(&env);
+        let other_token = Address::generate(&env);
+
+        let res = client.try_initialize(&admin, &other_token);
+        assert_eq!(res.unwrap_err().unwrap(), VoucherError::AlreadyInitialized);
+        // Confirms it's a no-op, not a partial overwrite.
+        let _ = token;
+    }
+
+    #[test]
+    fn merchant_scope_restricts_category_and_region() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (admin, _, contract_id, client) = setup(&env);
+        let recipient = Address::generate(&env);
+        let merchant = Address::generate(&env);
+        client.set_merchant(&admin, &merchant, &true);
+
+        // Scope the merchant to "clinics" in "lagos" only.
+        let mut categories = soroban_sdk::Vec::new(&env);
+        categories.push_back(Symbol::new(&env, "clinics"));
+        let mut regions = soroban_sdk::Vec::new(&env);
+        regions.push_back(Symbol::new(&env, "lagos"));
+        client.set_merchant_scope(&admin, &merchant, &categories, &regions);
+
+        // The seeded voucher is "groceries"/"nairobi" — outside both scopes.
+        seed_voucher(
+            &env,
+            &contract_id,
+            20,
+            &sample_voucher(&env, recipient.clone(), 100, 0),
+        );
+
+        let res = client.try_can_redeem(&20, &recipient, &merchant, &10);
+        assert_eq!(res.unwrap_err().unwrap(), VoucherError::CategoryNotApproved);
+
+        // Right category, still wrong region.
+        let mut right_category = sample_voucher(&env, recipient.clone(), 100, 0);
+        right_category.category = Symbol::new(&env, "clinics");
+        seed_voucher(&env, &contract_id, 21, &right_category);
+        let res = client.try_can_redeem(&21, &recipient, &merchant, &10);
+        assert_eq!(res.unwrap_err().unwrap(), VoucherError::RegionNotApproved);
+
+        // Right category and region: passes.
+        let mut in_scope = sample_voucher(&env, recipient.clone(), 100, 0);
+        in_scope.category = Symbol::new(&env, "clinics");
+        in_scope.region = Symbol::new(&env, "lagos");
+        seed_voucher(&env, &contract_id, 22, &in_scope);
+        let v = client.can_redeem(&22, &recipient, &merchant, &10);
+        assert_eq!(v.spent, 0);
+    }
+
+    #[test]
+    fn unscoped_merchant_accepts_any_category_or_region() {
+        // A merchant with no `set_merchant_scope` call (the default after
+        // registration) must remain unrestricted — this is what keeps
+        // `merchant_gating` and the other pre-existing tests valid without
+        // every one of them having to configure a scope.
+        let env = Env::default();
+        env.mock_all_auths();
+        let (admin, _, contract_id, client) = setup(&env);
+        let recipient = Address::generate(&env);
+        let merchant = Address::generate(&env);
+        client.set_merchant(&admin, &merchant, &true);
+
+        seed_voucher(
+            &env,
+            &contract_id,
+            23,
+            &sample_voucher(&env, recipient.clone(), 100, 0),
+        );
+        let v = client.can_redeem(&23, &recipient, &merchant, &10);
+        assert_eq!(v.spent, 0);
     }
 }

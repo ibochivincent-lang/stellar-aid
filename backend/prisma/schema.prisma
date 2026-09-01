@@ -108,3 +108,47 @@ model AuditLog {
   metadata  String?
   createdAt DateTime @default(now())
 }
+
+// ------------------------------------------------------------------
+// Event delivery — decodes aid_voucher contract events off Soroban RPC
+// and fans them out over SSE / signed webhooks. See src/events, src/webhooks.
+// ------------------------------------------------------------------
+
+/// Tracks how far the event poller has read, per contract, so it resumes
+/// from the right place across restarts instead of re-scanning from genesis
+/// (or missing events emitted while the process was down).
+model EventCursor {
+  contractId  String   @id
+  lastLedger  Int
+  updatedAt   DateTime @updatedAt
+}
+
+/// An NGO/auditor/merchant endpoint subscribed to voucher lifecycle events.
+model WebhookSubscription {
+  id         String   @id @default(cuid())
+  url        String
+  /// HMAC-SHA256 signing secret for this subscriber. Never returned by the API.
+  secret     String
+  /// Event type names to deliver (e.g. "issued", "redeemed"); empty = all.
+  eventTypes String[] @default([])
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  deliveries WebhookDelivery[]
+}
+
+/// One delivery attempt outcome, kept for debugging and retry/backoff.
+model WebhookDelivery {
+  id             String               @id @default(cuid())
+  subscription   WebhookSubscription  @relation(fields: [subscriptionId], references: [id])
+  subscriptionId String
+  eventId        String
+  eventType      String
+  attempt        Int                  @default(1)
+  statusCode     Int?
+  ok             Boolean              @default(false)
+  error          String?
+  createdAt      DateTime             @default(now())
+
+  @@index([subscriptionId])
+}

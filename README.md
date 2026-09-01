@@ -61,17 +61,37 @@ auto-burn when they expire. Built on the latest 2026 Stellar protocol features.
 stellar-aid/
 ├── docs/issues.md       # Wave-ready issue breakdown (100/150/200 pt)
 ├── contracts/           # Soroban smart contracts (Rust)
-└── backend/             # NestJS + @stellar/stellar-sdk v28
+├── backend/             # NestJS + @stellar/stellar-sdk v16, incl. events/ + webhooks/
+└── frontend/packages/   # Client SDKs for the (not-yet-built) citizen/merchant/auditor UI
 ```
+
+## Events & webhooks
+
+The backend polls Soroban RPC for `aid_voucher` contract events (`issued`,
+`redeemed`, `burned`, `frozen`, `merchant`, `delegate`), decodes them into
+typed JSON, and fans them out two ways — scoped equivalents of the
+event-delivery layer in this team's other Stellar project,
+[Orbital](https://github.com/determined-001/orbital_stellar), sized to what
+StellarAID itself needs rather than a general-purpose registry:
+
+- **Live stream** — `GET /api/events/stream` (Server-Sent Events). A React
+  hook for it lives at `frontend/packages/use-stellar-aid-events`.
+- **Signed webhooks** — `POST /api/webhooks` (admin-only) registers a URL to
+  receive HMAC-SHA256-signed POSTs for voucher lifecycle events, for NGOs/
+  auditors that want a push feed instead of polling. See
+  `backend/src/webhooks/verify.ts` for the receiver-side signature check.
+
+A resume cursor (`EventCursor`, per contract) means a backend restart picks
+up where it left off instead of re-scanning or dropping events, within
+Soroban RPC's ~7-day retention window.
 
 ## Contracts
 
 ```bash
 cd contracts
-# soroban-sdk 26 requires wasm32v1-none on Rust 1.84+ (rustup target add wasm32v1-none)
-cargo build --target wasm32v1-none --release
+cargo build --target wasm32-unknown-unknown --release
 cargo test                # unit tests (testutils)
-stellar contract deploy --wasm target/wasm32v1-none/release/stellar_aid.wasm
+stellar contract deploy --wasm target/wasm32-unknown-unknown/release/stellar_aid.wasm
 ```
 
 ## Backend

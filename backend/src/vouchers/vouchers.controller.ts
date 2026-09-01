@@ -9,11 +9,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AdminGuard } from '../common/admin.guard';
-import {
-  IssueVoucherDto,
-  SpendVoucherDto,
-  VouchersService,
-} from './vouchers.service';
+import { IssueVoucherDto } from './dto/issue-voucher.dto';
+import { SpendVoucherDto } from './dto/spend-voucher.dto';
+import { VouchersService } from './vouchers.service';
 
 @Controller('vouchers')
 export class VouchersController {
@@ -48,10 +46,7 @@ export class VouchersController {
   // HTTP trigger to admins/automation rather than letting any caller spam it.
   @Post(':id/burn')
   @UseGuards(AdminGuard)
-  burn(
-    @Param('id') _id: string,
-    @Body('voucherId', ParseIntPipe) voucherId: number,
-  ) {
+  burn(@Param('id') _id: string, @Body('voucherId', ParseIntPipe) voucherId: number) {
     return this.vouchers.burnExpired(voucherId);
   }
 }

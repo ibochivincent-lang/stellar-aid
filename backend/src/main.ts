@@ -5,6 +5,7 @@ dotenv.config();
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 
 // Prisma's `BigInt` columns (voucher/program amounts) come back as native
@@ -21,6 +22,11 @@ import { AppModule } from './app.module';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  // Sets the standard hardening headers (HSTS, X-Content-Type-Options,
+  // X-Frame-Options, a conservative CSP, etc.) — this is a JSON API with no
+  // browser-rendered views of its own, so the defaults are safe as-is.
+  app.use(helmet());
 
   app.setGlobalPrefix('api');
   app.enableCors({
