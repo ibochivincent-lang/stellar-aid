@@ -39,7 +39,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          # soroban-sdk 26 refuses to build for wasm32-unknown-unknown on
+          # Rust 1.82+ (reference-types/multi-value are on by default there,
+          # which it doesn't yet support) — it requires wasm32v1-none instead.
+          targets: wasm32v1-none
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
@@ -56,4 +59,4 @@ jobs:
         continue-on-error: true
 
       - run: cargo test
-      - run: cargo build --target wasm32-unknown-unknown --release
+      - run: cargo build --target wasm32v1-none --release

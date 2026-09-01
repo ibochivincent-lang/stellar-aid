@@ -5,8 +5,7 @@ function contextWithHeader(header: string | undefined): ExecutionContext {
   return {
     switchToHttp: () => ({
       getRequest: () => ({
-        header: (name: string) =>
-          name === 'x-admin-key' ? header : undefined,
+        header: (name: string) => (name === 'x-admin-key' ? header : undefined),
       }),
     }),
   } as unknown as ExecutionContext;
