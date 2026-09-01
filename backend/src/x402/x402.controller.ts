@@ -1,4 +1,12 @@
-import { Controller, Get, Headers, HttpCode, Logger, Req, Res } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Headers,
+  HttpCode,
+  Logger,
+  Req,
+  Res,
+} from '@nestjs/common';
 import { Request, Response } from 'express';
 
 /**
@@ -63,7 +71,9 @@ export class X402Controller {
   /** Verifies an x402 payment proof against the configured verifier service. */
   private async verifyProof(proof: string): Promise<boolean> {
     if (!this.verifierUrl) {
-      this.logger.error('X402_VERIFIER_URL is not configured — rejecting all proofs');
+      this.logger.error(
+        'X402_VERIFIER_URL is not configured — rejecting all proofs',
+      );
       return false;
     }
     try {
@@ -80,7 +90,7 @@ export class X402Controller {
       const body = (await resp.json()) as { verified?: boolean };
       return body.verified === true;
     } catch (e) {
-      this.logger.warn(`x402 proof verification failed: ${e}`);
+      this.logger.warn(`x402 proof verification failed: ${String(e)}`);
       return false;
     }
   }

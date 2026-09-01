@@ -25,7 +25,9 @@ export class AdminGuard implements CanActivate {
     const configuredKey = process.env.ADMIN_API_KEY;
     if (!configuredKey) {
       // Fail closed: an unconfigured secret must never mean "open to everyone".
-      this.logger.error('ADMIN_API_KEY is not configured — refusing all admin requests');
+      this.logger.error(
+        'ADMIN_API_KEY is not configured — refusing all admin requests',
+      );
       throw new UnauthorizedException('admin API is not configured');
     }
 

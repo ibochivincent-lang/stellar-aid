@@ -48,7 +48,10 @@ export class VouchersController {
   // HTTP trigger to admins/automation rather than letting any caller spam it.
   @Post(':id/burn')
   @UseGuards(AdminGuard)
-  burn(@Param('id') _id: string, @Body('voucherId', ParseIntPipe) voucherId: number) {
+  burn(
+    @Param('id') _id: string,
+    @Body('voucherId', ParseIntPipe) voucherId: number,
+  ) {
     return this.vouchers.burnExpired(voucherId);
   }
 }

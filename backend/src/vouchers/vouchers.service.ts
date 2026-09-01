@@ -60,7 +60,15 @@ export class VouchersService {
     const resp = await this.stellar.signAndSubmitServerSide(
       this.contractId,
       'issue_voucher',
-      [adminPublicKey, recipientWallet, dto.voucherId, BigInt(dto.amount), dto.category, dto.region, dto.expiresAt],
+      [
+        adminPublicKey,
+        recipientWallet,
+        dto.voucherId,
+        BigInt(dto.amount),
+        dto.category,
+        dto.region,
+        dto.expiresAt,
+      ],
     );
     // `sendTransaction`'s status is 'PENDING' | 'DUPLICATE' | 'TRY_AGAIN_LATER' | 'ERROR'
     // — 'SUCCESS' only ever appears in `getTransaction`'s response, once the
@@ -75,14 +83,19 @@ export class VouchersService {
       try {
         await this.stellar.awaitTransaction(resp.hash);
       } catch (e) {
-        this.logger.warn(`ledger reconcile pending: ${e}`);
+        this.logger.warn(`ledger reconcile pending: ${String(e)}`);
       }
     }
 
     return this.prisma.voucher.create({
       data: {
         voucherId: dto.voucherId,
-        recipient: { connectOrCreate: { where: { wallet: recipientWallet }, create: { wallet: recipientWallet } } },
+        recipient: {
+          connectOrCreate: {
+            where: { wallet: recipientWallet },
+            create: { wallet: recipientWallet },
+          },
+        },
         program: {
           connectOrCreate: {
             where: { id: dto.programId ?? 'default-program' },
@@ -123,6 +136,10 @@ export class VouchersService {
 
   /** Server-side: flywheel burn of expired vouchers. */
   async burnExpired(voucherId: number) {
-    return this.stellar.signAndSubmitServerSide(this.contractId, 'burn_expired', [voucherId]);
+    return this.stellar.signAndSubmitServerSide(
+      this.contractId,
+      'burn_expired',
+      [voucherId],
+    );
   }
 }

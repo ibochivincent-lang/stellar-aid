@@ -40,6 +40,8 @@ model Merchant {
   region    String
   active    Boolean  @default(true)
   onCreate  DateTime @default(now())
+
+  redemptions Redemption[]
 }
 
 model AidProgram {
@@ -50,6 +52,8 @@ model AidProgram {
   spentBudget BigInt   @default(0)
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())
+
+  vouchers Voucher[]
 }
 
 model Voucher {
