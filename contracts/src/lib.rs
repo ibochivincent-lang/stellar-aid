@@ -1,4 +1,10 @@
 #![no_std]
+// `issue_voucher`'s admin-bootstrap signature genuinely needs one field per
+// on-chain voucher attribute (env/caller aside: recipient, id, amount,
+// category, region, expiry) — grouping them into a params struct would only
+// move the field count, not reduce it, while breaking the simple positional
+// `stellar contract invoke` ergonomics this early-stage contract relies on.
+#![allow(clippy::too_many_arguments)]
 
 //! StellarAID — Programmable aid vouchers.
 //!
@@ -8,8 +14,70 @@
 //! contract enforces all *spendability rules* on-chain.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, token, Address, Env, Symbol,
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
+    Symbol,
 };
+
+/// Contract events. Structured with `#[contractevent]` (soroban-sdk 26+) rather
+/// than raw `env.events().publish(...)` tuples — the latter is deprecated in
+/// favor of typed events so downstream indexers get a stable, self-describing
+/// schema instead of positional topic/data tuples.
+#[contractevent(topics = ["initialize"])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct InitializeEvent {
+    pub admin: Address,
+}
+
+#[contractevent(topics = ["merchant"])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MerchantEvent {
+    pub merchant: Address,
+    pub active: bool,
+}
+
+#[contractevent(topics = ["issued"])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct IssuedEvent {
+    #[topic]
+    pub voucher_id: u32,
+    pub recipient: Address,
+    pub amount: i128,
+}
+
+#[contractevent(topics = ["redeemed"])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct RedeemedEvent {
+    #[topic]
+    pub voucher_id: u32,
+    pub merchant: Address,
+    pub amount: i128,
+    pub spent: i128,
+}
+
+#[contractevent(topics = ["burned"])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BurnedEvent {
+    #[topic]
+    pub voucher_id: u32,
+    pub remaining: i128,
+}
+
+#[contractevent(topics = ["delegate"])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DelegateEvent {
+    #[topic]
+    pub voucher_id: u32,
+    pub delegate: Address,
+    pub active: bool,
+}
+
+#[contractevent(topics = ["frozen"])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct FrozenEvent {
+    #[topic]
+    pub voucher_id: u32,
+    pub frozen: bool,
+}
 
 #[contracttype]
 pub enum DataKey {
@@ -66,8 +134,7 @@ impl AidVoucher {
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Token, &token);
-        env.events()
-            .publish((Symbol::new(&env, "initialize"),), (admin,));
+        InitializeEvent { admin }.publish(&env);
     }
 
     fn admin(env: &Env) -> Address {
@@ -79,7 +146,7 @@ impl AidVoucher {
 
     /// Loads the configured USDC token client. Not parameterized by contract
     /// address — the reserve is always this contract, addressed internally.
-    fn token_client(env: &Env) -> token::Client {
+    fn token_client(env: &Env) -> token::Client<'_> {
         let token: Address = env
             .storage()
             .instance()
@@ -110,8 +177,7 @@ impl AidVoucher {
         env.storage()
             .instance()
             .set(&DataKey::Merchant(merchant.clone()), &active);
-        env.events()
-            .publish((Symbol::new(&env, "merchant"),), (merchant, active));
+        MerchantEvent { merchant, active }.publish(&env);
         Ok(())
     }
 
@@ -165,10 +231,12 @@ impl AidVoucher {
                 depleted: false,
             },
         );
-        env.events().publish(
-            (Symbol::new(&env, "issued"), voucher_id),
-            (recipient, amount),
-        );
+        IssuedEvent {
+            voucher_id,
+            recipient,
+            amount,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -249,10 +317,13 @@ impl AidVoucher {
         let contract = env.current_contract_address();
         Self::token_client(&env).transfer(&contract, &merchant, &amount);
 
-        env.events().publish(
-            (Symbol::new(&env, "redeemed"), voucher_id),
-            (merchant, amount, spent),
-        );
+        RedeemedEvent {
+            voucher_id,
+            merchant,
+            amount,
+            spent,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -276,8 +347,11 @@ impl AidVoucher {
         env.storage()
             .instance()
             .remove(&DataKey::Voucher(voucher_id));
-        env.events()
-            .publish((Symbol::new(&env, "burned"), voucher_id), (remaining,));
+        BurnedEvent {
+            voucher_id,
+            remaining,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -305,10 +379,12 @@ impl AidVoucher {
         env.storage()
             .instance()
             .set(&DataKey::Delegate(voucher_id, delegate.clone()), &active);
-        env.events().publish(
-            (Symbol::new(&env, "delegate"), voucher_id),
-            (delegate, active),
-        );
+        DelegateEvent {
+            voucher_id,
+            delegate,
+            active,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -330,8 +406,11 @@ impl AidVoucher {
         env.storage()
             .instance()
             .set(&DataKey::Voucher(voucher_id), &voucher);
-        env.events()
-            .publish((Symbol::new(&env, "frozen"), voucher_id), (frozen,));
+        FrozenEvent {
+            voucher_id,
+            frozen,
+        }
+        .publish(&env);
         Ok(())
     }
 
