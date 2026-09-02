@@ -88,6 +88,20 @@ export class VouchersService {
       },
     });
 
+    // Committing this voucher's amount against the program's budget here —
+    // rather than never tracking it at all, which is what happened before
+    // this — is what makes `burnExpired` below able to give it back when
+    // the voucher expires unspent ("the money doesn't idle" only means
+    // something if the read model shows the budget freeing back up).
+    // Best-effort bookkeeping on the read model, not atomic with the
+    // voucher insert above; on-chain balances remain the source of truth.
+    await this.prisma.aidProgram
+      .update({
+        where: { id: voucher.programId },
+        data: { spentBudget: { increment: BigInt(dto.amount) } },
+      })
+      .catch((e: unknown) => this.logger.warn(`failed to update program spentBudget on issue: ${e}`));
+
     await this.auditLog.record({
       actor: adminPublicKey,
       action: 'voucher.issue',
@@ -126,9 +140,46 @@ export class VouchersService {
     return { status: res.status };
   }
 
-  /** Server-side: flywheel burn of expired vouchers. */
+  /**
+   * Server-side: flywheel burn of expired vouchers. The contract already
+   * returns any unspent remainder to the treasury on-chain (see
+   * `burn_expired` in contracts/src/lib.rs) — this is what makes that
+   * refund visible in the read model too: without it, a burned voucher's
+   * `AidProgram.spentBudget` stayed inflated forever, understating how much
+   * budget was actually still available.
+   */
   async burnExpired(voucherId: number) {
     const resp = await this.stellar.signAndSubmitServerSide(this.contractId, 'burn_expired', [voucherId]);
+
+    // NOTE: `voucherId` (the contract's global u32 key) is looked up with
+    // `findFirst` rather than a unique lookup — the Prisma schema's
+    // `@@unique([programId, voucherId])` on `Voucher` allows the same
+    // voucherId to appear under different programs, but the on-chain
+    // contract keys `DataKey::Voucher` on voucherId alone, so it must
+    // actually be globally unique in practice. That mismatch between the
+    // schema and the contract's real key space is worth tightening
+    // (`voucherId` should probably be `@unique` on its own), but is
+    // unrelated to this fix — flagging it rather than silently relying on
+    // "there's usually only one match."
+    const voucher = await this.prisma.voucher.findFirst({ where: { voucherId } });
+    if (voucher) {
+      const remaining = voucher.amount - voucher.spent;
+      await this.prisma
+        .$transaction([
+          this.prisma.voucher.update({
+            where: { id: voucher.id },
+            data: { onChainStatus: 'BURNED' },
+          }),
+          this.prisma.aidProgram.update({
+            where: { id: voucher.programId },
+            data: { spentBudget: { decrement: remaining > 0n ? remaining : 0n } },
+          }),
+        ])
+        .catch((e: unknown) => this.logger.warn(`failed to reconcile burn for voucher ${voucherId}: ${e}`));
+    } else {
+      this.logger.warn(`burnExpired: no read-model voucher found for voucherId ${voucherId}`);
+    }
+
     await this.auditLog.record({
       actor: this.stellar.treasuryPublicKey,
       action: 'voucher.burn',

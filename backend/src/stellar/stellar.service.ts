@@ -35,8 +35,7 @@ export class StellarService {
   constructor() {
     const horizonUrl =
       process.env.STELLAR_HORIZON_URL ?? 'https://horizon-testnet.stellar.org';
-    const rpcUrl =
-      process.env.STELLAR_RPC_URL ?? 'https://soroban-testnet.stellar.org';
+    const rpcUrl = process.env.STELLAR_RPC_URL ?? 'https://soroban-testnet.stellar.org';
     this.horizon = new Horizon.Server(horizonUrl);
     this.rpc = new SorobanRpc.Server(rpcUrl);
   }
@@ -76,11 +75,7 @@ export class StellarService {
   // Contract invocation building
   // ------------------------------------------------------------------
 
-  buildOperation(
-    contractId: string,
-    method: string,
-    args: unknown[],
-  ): xdr.Operation {
+  buildOperation(contractId: string, method: string, args: unknown[]): xdr.Operation {
     const contract = new Contract(contractId);
     const scArgs = (args ?? []).map((a) => nativeToScVal(a));
     return contract.call(method, ...scArgs);
@@ -112,40 +107,23 @@ export class StellarService {
     const tx = await this.buildTransaction(publicKey, op);
     const resp = await this.rpc.simulateTransaction(tx);
     if (!SorobanRpc.Api.isSimulationSuccess(resp)) {
-      const reason = SorobanRpc.Api.isSimulationError(resp)
-        ? resp.error
-        : JSON.stringify(resp);
+      const reason = SorobanRpc.Api.isSimulationError(resp) ? resp.error : JSON.stringify(resp);
       throw new Error(`Simulation failed: ${reason}`);
     }
     return { tx, sim: resp };
   }
 
   /** Preview a contract call. Returns the simulation (success carries a return value). */
-  async simulate(
-    contractId: string,
-    publicKey: string,
-    method: string,
-    args: unknown[],
-  ) {
-    const { sim } = await this.buildAndSimulate(
-      contractId,
-      publicKey,
-      method,
-      args,
-    );
+  async simulate(contractId: string, publicKey: string, method: string, args: unknown[]) {
+    const { sim } = await this.buildAndSimulate(contractId, publicKey, method, args);
     return sim;
   }
 
   /** Read-only query: simulate and decode the return value (zero cost, no ledger write). */
-  async read(
-    contractId: string,
-    publicKey: string,
-    method: string,
-    args: unknown[],
-  ): Promise<unknown> {
+  async read(contractId: string, publicKey: string, method: string, args: unknown[]) {
     const sim = await this.simulate(contractId, publicKey, method, args);
     if (sim.result && sim.result.retval) {
-      return scValToNative(sim.result.retval) as unknown;
+      return scValToNative(sim.result.retval);
     }
     return null;
   }
@@ -165,22 +143,28 @@ export class StellarService {
    * which fails Soroban's signature check unless they happen to match, and
    * is a spoofable admin surface if they're ever assumed to.
    */
-  async signAndSubmitServerSide(
-    contractId: string,
-    method: string,
-    args: unknown[],
-  ) {
-    const publicKey = this.treasuryPublicKey;
-    const { tx: rawTx, sim } = await this.buildAndSimulate(
-      contractId,
-      publicKey,
-      method,
-      args,
-    );
+  async signAndSubmitServerSide(contractId: string, method: string, args: unknown[]) {
+    return this.signAndSubmitAs(this.treasuryKeypair, contractId, method, args);
+  }
+
+  /**
+   * Generalizes `signAndSubmitServerSide` to sign as any server-held
+   * keypair, not just the treasury one — used by the anomaly-oracle
+   * scanner (`fraud/oracle-client.service.ts`), which authenticates as
+   * its own on-chain identity (granted the oracle role via `set_oracle`,
+   * separate from the treasury/admin key) rather than as the admin.
+   * Keeping oracle and treasury as two distinct keys means a compromised
+   * scanner process can flag/post anomalies (which move no funds — see
+   * the contract's "Anomaly oracle" module doc) but can never sign an
+   * `issue_voucher`/`burn_expired`/admin call.
+   */
+  async signAndSubmitAs(keypair: Keypair, contractId: string, method: string, args: unknown[]) {
+    const publicKey = keypair.publicKey();
+    const { tx: rawTx, sim } = await this.buildAndSimulate(contractId, publicKey, method, args);
     // `assembleTransaction` takes (the original transaction, its simulation)
     // in that order — not the passphrase, and not just the simulation alone.
     const tx = SorobanRpc.assembleTransaction(rawTx, sim).build();
-    tx.sign(this.treasuryKeypair);
+    tx.sign(keypair);
     const resp = await this.rpc.sendTransaction(tx);
     this.logger.log(`submitted ${method}: ${resp.status}`);
     return resp;
@@ -197,28 +181,17 @@ export class StellarService {
     method: string,
     args: unknown[],
   ) {
-    const { tx: rawTx, sim } = await this.buildAndSimulate(
-      contractId,
-      publicKey,
-      method,
-      args,
-    );
+    const { tx: rawTx, sim } = await this.buildAndSimulate(contractId, publicKey, method, args);
     const tx = SorobanRpc.assembleTransaction(rawTx, sim).build().toXDR();
     return { transactionXdr: tx };
   }
 
   /** Poll Soroban RPC until a submitted (hash) settles. Reconciles our DB. */
-  async awaitTransaction(
-    hash: string,
-  ): Promise<SorobanRpc.Api.GetTransactionResponse> {
+  async awaitTransaction(hash: string): Promise<SorobanRpc.Api.GetTransactionResponse> {
     const timeout = Date.now() + 30_000;
     while (Date.now() < timeout) {
       const res = await this.rpc.getTransaction(hash);
-      if (
-        res.status === SorobanRpc.Api.GetTransactionStatus.SUCCESS ||
-        res.status === SorobanRpc.Api.GetTransactionStatus.FAILED
-      )
-        return res;
+      if (res.status === 'SUCCESS' || res.status === 'FAILED') return res;
       await new Promise((r) => setTimeout(r, 1000));
     }
     throw new Error(`Transaction ${hash} timed out awaiting finality`);

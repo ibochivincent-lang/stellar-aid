@@ -3,12 +3,20 @@
 // this database is an index/read-model for KYC, merchants and programs.
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  // Lets `prisma migrate dev` emit `CREATE EXTENSION IF NOT EXISTS vector`
+  // itself (needs `previewFeatures = ["postgresqlExtensions"]` above, on
+  // the generator, to take effect) — required for `AiDocument.embedding`.
+  // Some managed Postgres providers don't allow `CREATE EXTENSION` from an
+  // application role; if migrate fails on this, an admin needs to run
+  // `CREATE EXTENSION vector;` once, out of band, before re-running migrate.
+  extensions = [vector]
 }
 
 enum Role {
@@ -99,6 +107,16 @@ model VoucherDelegate {
   active     Boolean @default(true)
 }
 
+/// Records a completed write so a retried request (same client-supplied
+/// `Idempotency-Key` header) replays the stored response instead of
+/// re-executing an on-chain, fund-moving call a second time. See
+/// `src/common/idempotency.interceptor.ts`.
+model IdempotencyKey {
+  key          String   @id
+  responseJson String
+  createdAt    DateTime @default(now())
+}
+
 model AuditLog {
   id        String   @id @default(cuid())
   actor     String
@@ -107,6 +125,28 @@ model AuditLog {
   entityId  String
   metadata  String?
   createdAt DateTime @default(now())
+}
+
+// ------------------------------------------------------------------
+// Citizen AI assistant — RAG over program/merchant/FAQ content, paid
+// per-query through the existing x402 endpoint. See src/ai.
+// ------------------------------------------------------------------
+
+/// FAQ/policy text indexed for the assistant's optional semantic search
+/// layer (structured Prisma queries in `RetrievalService` handle the
+/// common factual questions; this is for open-ended policy questions a
+/// fixed query can't answer). The `embedding` column needs the pgvector
+/// extension — see the migration note in
+/// `backend/src/ai/vector-store.service.ts`. Because Prisma's
+/// `Unsupported(...)` type has no generated Client methods, this model is
+/// only ever written/read through `$queryRawUnsafe`/`$executeRawUnsafe`
+/// in that file, never through `prisma.aiDocument.*`.
+model AiDocument {
+  id        String                        @id @default(cuid())
+  programId String?
+  content   String
+  embedding Unsupported("vector(1536)")?
+  createdAt DateTime                      @default(now())
 }
 
 // ------------------------------------------------------------------

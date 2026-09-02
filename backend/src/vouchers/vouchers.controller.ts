@@ -7,8 +7,12 @@ import {
   Post,
   Query,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
-import { AdminGuard } from '../common/admin.guard';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
+import { IdempotencyInterceptor } from '../common/idempotency.interceptor';
 import { IssueVoucherDto } from './dto/issue-voucher.dto';
 import { SpendVoucherDto } from './dto/spend-voucher.dto';
 import { VouchersService } from './vouchers.service';
@@ -27,11 +31,15 @@ export class VouchersController {
     return this.vouchers.get(id);
   }
 
-  // Locks treasury funds on-chain — admin-only. See AdminGuard for the
-  // (interim) auth model; the recipient never needs to sign this, only the
-  // server's own treasury key does, so no admin key comes from the client.
+  // Locks treasury funds on-chain — admin-only. The recipient never needs
+  // to sign this, only the server's own treasury key does, so no admin key
+  // comes from the client. Send an `Idempotency-Key` header so a retried
+  // request (e.g. after a timeout) replays the original result instead of
+  // locking funds for a second voucher.
   @Post()
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @UseInterceptors(IdempotencyInterceptor)
   issue(@Body() dto: IssueVoucherDto) {
     return this.vouchers.issue(dto);
   }
@@ -45,7 +53,8 @@ export class VouchersController {
   // backend still spends its own treasury fee to submit it, so gate the
   // HTTP trigger to admins/automation rather than letting any caller spam it.
   @Post(':id/burn')
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
   burn(@Param('id') _id: string, @Body('voucherId', ParseIntPipe) voucherId: number) {
     return this.vouchers.burnExpired(voucherId);
   }

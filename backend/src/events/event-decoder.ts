@@ -1,12 +1,15 @@
 import { rpc as SorobanRpc, scValToNative } from '@stellar/stellar-sdk';
 import {
   AidVoucherEvent,
+  AnomalyEvent,
   BurnedEvent,
   DelegateEvent,
+  FlaggedEvent,
   FrozenEvent,
   InitializeEvent,
   IssuedEvent,
   MerchantEvent,
+  OracleSetEvent,
   RedeemedEvent,
   UnknownEvent,
 } from './event.types';
@@ -33,9 +36,11 @@ function base(
 /**
  * Decodes one Soroban RPC event into a typed `AidVoucherEvent`. Topic[0] is
  * always the event name `Symbol` the contract published; topic[1] (when
- * present) is the voucher id. Everything else comes from `value`, which
- * Soroban encodes as a tuple matching the `(a, b, ...)` the contract passed
- * to `env.events().publish((...topics), (...data))`.
+ * present) is the voucher id. Everything else comes from `value` — each
+ * contract event is a `#[contractevent(..., data_format = "vec")]` struct,
+ * so its non-topic fields still arrive as a positional array in declaration
+ * order, same as the raw `env.events().publish((...topics), (...data))`
+ * tuples this decoder was originally written against.
  *
  * Returns an `unknown`-typed event (never throws) for anything that doesn't
  * match a known shape — a topic from a future contract version, for
@@ -110,6 +115,35 @@ export function decodeContractEvent(raw: SorobanRpc.Api.EventResponse): AidVouch
           type: 'frozen',
           data: { voucherId, frozen },
         } satisfies FrozenEvent;
+      }
+      case 'oracle_set': {
+        const [oracle, active] = data as [string, boolean];
+        return {
+          ...base(raw),
+          type: 'oracle_set',
+          data: { oracle, active },
+        } satisfies OracleSetEvent;
+      }
+      case 'flagged': {
+        // Topic[1] here is the flagged merchant's address, not a voucher
+        // id — unlike the voucher-keyed events above, `flag_merchant`
+        // publishes `(Symbol::new("flagged"), merchant)` as its topics.
+        const merchant = String(topics[1]);
+        const [oracle, reason] = data as [string, unknown];
+        return {
+          ...base(raw),
+          type: 'flagged',
+          data: { merchant, oracle, reason: String(reason) },
+        } satisfies FlaggedEvent;
+      }
+      case 'anomaly': {
+        const voucherId = Number(topics[1]);
+        const [oracle, score, reason] = data as [string, unknown, unknown];
+        return {
+          ...base(raw),
+          type: 'anomaly',
+          data: { voucherId, oracle, score: Number(score), reason: String(reason) },
+        } satisfies AnomalyEvent;
       }
       default:
         return { ...base(raw), type: 'unknown', data: { topics, raw: value } } satisfies UnknownEvent;

@@ -1,5 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Post, UseGuards } from '@nestjs/common';
-import { AdminGuard } from '../common/admin.guard';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
 import { CreateWebhookSubscriptionDto } from './dto/create-webhook-subscription.dto';
 import { WebhookSubscriptionsService } from './webhook-subscriptions.service';
 
@@ -16,13 +18,15 @@ export class WebhooksController {
   // delivering voucher event data (recipient/merchant addresses, amounts)
   // to an arbitrary URL, so this isn't self-service.
   @Post()
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
   create(@Body() dto: CreateWebhookSubscriptionDto) {
     return this.subscriptions.create(dto);
   }
 
   @Delete(':id')
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
   deactivate(@Param('id') id: string) {
     return this.subscriptions.deactivate(id);
   }

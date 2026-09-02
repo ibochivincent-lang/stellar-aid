@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { AdminGuard } from '../common/admin.guard';
 import { PrismaService } from '../common/prisma.service';
 import { EventsModule } from '../events/events.module';
 import { WebhookDeliveryService } from './webhook-delivery.service';
@@ -9,6 +8,6 @@ import { WebhooksController } from './webhooks.controller';
 @Module({
   imports: [EventsModule],
   controllers: [WebhooksController],
-  providers: [WebhookSubscriptionsService, WebhookDeliveryService, PrismaService, AdminGuard],
+  providers: [WebhookSubscriptionsService, WebhookDeliveryService, PrismaService],
 })
 export class WebhooksModule {}

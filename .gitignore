@@ -1,24 +1,25 @@
-# Rust / Soroban
-target/
-Cargo.lock
-
-# Node
+# Dependencies
 node_modules/
-dist/
-build/
 
-# Env
+# Backend build output
+backend/dist/
+backend/coverage/
+
+# Rust build output
+contracts/target/
+
+# Env files — never commit real secrets. Only *.env.example files are tracked.
 .env
-.env.local
+.env.*
+!.env.example
+!*/.env.example
 
-# Logs
+# Editor / OS cruft
+.DS_Store
+.vscode/
+.idea/
 *.log
 npm-debug.log*
 
-# IDE
-.idea/
-.vscode/
-
-# OS
-.DS_Store
-Thumbs.db
+# Prisma generated client (regenerated locally via `npx prisma generate`)
+backend/node_modules/.prisma/

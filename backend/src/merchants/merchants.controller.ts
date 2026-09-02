@@ -1,5 +1,7 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
-import { AdminGuard } from '../common/admin.guard';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
 import { SetMerchantDto } from './dto/set-merchant.dto';
 import { SetMerchantScopeDto } from './dto/set-merchant-scope.dto';
 import { MerchantsService } from './merchants.service';
@@ -20,7 +22,8 @@ export class MerchantsController {
 
   // Registers/toggles a merchant on-chain and mirrors it into the read model.
   @Post()
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
   setMerchant(@Body() dto: SetMerchantDto) {
     return this.merchants.setMerchant(dto);
   }
@@ -28,7 +31,8 @@ export class MerchantsController {
   // Restricts which voucher categories/regions this merchant may redeem
   // (empty arrays clear the restriction — see SetMerchantScopeDto).
   @Post('scope')
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
   setScope(@Body() dto: SetMerchantScopeDto) {
     return this.merchants.setScope(dto);
   }

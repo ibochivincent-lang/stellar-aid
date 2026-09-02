@@ -22,26 +22,26 @@ use soroban_sdk::{
 /// than raw `env.events().publish(...)` tuples — the latter is deprecated in
 /// favor of typed events so downstream indexers get a stable, self-describing
 /// schema instead of positional topic/data tuples.
-#[contractevent(topics = ["initialize"])]
+#[contractevent(topics = ["initialize"], data_format = "vec")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct InitializeEvent {
     pub admin: Address,
 }
 
-#[contractevent(topics = ["merchant"])]
+#[contractevent(topics = ["merchant"], data_format = "vec")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct MerchantEvent {
     pub merchant: Address,
     pub active: bool,
 }
 
-#[contractevent(topics = ["merchant_scope"])]
+#[contractevent(topics = ["merchant_scope"], data_format = "vec")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct MerchantScopeEvent {
     pub merchant: Address,
 }
 
-#[contractevent(topics = ["issued"])]
+#[contractevent(topics = ["issued"], data_format = "vec")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct IssuedEvent {
     #[topic]
@@ -50,7 +50,7 @@ pub struct IssuedEvent {
     pub amount: i128,
 }
 
-#[contractevent(topics = ["redeemed"])]
+#[contractevent(topics = ["redeemed"], data_format = "vec")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct RedeemedEvent {
     #[topic]
@@ -60,7 +60,7 @@ pub struct RedeemedEvent {
     pub spent: i128,
 }
 
-#[contractevent(topics = ["burned"])]
+#[contractevent(topics = ["burned"], data_format = "vec")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct BurnedEvent {
     #[topic]
@@ -68,7 +68,7 @@ pub struct BurnedEvent {
     pub remaining: i128,
 }
 
-#[contractevent(topics = ["delegate"])]
+#[contractevent(topics = ["delegate"], data_format = "vec")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct DelegateEvent {
     #[topic]
@@ -77,12 +77,38 @@ pub struct DelegateEvent {
     pub active: bool,
 }
 
-#[contractevent(topics = ["frozen"])]
+#[contractevent(topics = ["frozen"], data_format = "vec")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct FrozenEvent {
     #[topic]
     pub voucher_id: u32,
     pub frozen: bool,
+}
+
+#[contractevent(topics = ["oracle_set"], data_format = "vec")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct OracleSetEvent {
+    pub oracle: Address,
+    pub active: bool,
+}
+
+#[contractevent(topics = ["flagged"], data_format = "vec")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct FlaggedEvent {
+    #[topic]
+    pub merchant: Address,
+    pub caller: Address,
+    pub reason: Symbol,
+}
+
+#[contractevent(topics = ["anomaly"], data_format = "vec")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnomalyEvent {
+    #[topic]
+    pub voucher_id: u32,
+    pub caller: Address,
+    pub score: u32,
+    pub reason: Symbol,
 }
 
 #[contracttype]
@@ -92,6 +118,8 @@ pub enum DataKey {
     Merchant(Address),
     Voucher(u32),
     Delegate(u32, Address),
+    /// Whitelisted off-chain anomaly-scanner addresses (see `set_oracle`).
+    Oracle(Address),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -140,6 +168,7 @@ pub enum VoucherError {
     AlreadyInitialized = 10,
     CategoryNotApproved = 11,
     RegionNotApproved = 12,
+    NotOracle = 13,
 }
 
 #[contract]
@@ -490,6 +519,94 @@ impl AidVoucher {
     }
 
     // ------------------------------------------------------------------
+    // Anomaly oracle
+    //
+    // An off-chain scanner (e.g. `backend/src/fraud/` consuming the event
+    // poller's output) is granted a narrow, revocable role here — it can
+    // FLAG a merchant or POST an anomaly score for a voucher, both purely
+    // informational: neither call moves funds, deactivates anything, or
+    // freezes a voucher by itself. The oracle proposes; only the admin's
+    // own `set_merchant` / `set_frozen` calls (already elsewhere in this
+    // contract) actually act on a flag. That split is deliberate — an AI
+    // scoring model can be wrong or manipulated, so it never gets a path
+    // to unilaterally affect fund movement; it only gets to make its
+    // signal part of the auditable on-chain event log for a human (or the
+    // backend's own admin-gated automation) to act on.
+    // ------------------------------------------------------------------
+
+    /// Admin-only: grants or revokes the oracle role for `oracle`.
+    pub fn set_oracle(
+        env: Env,
+        caller: Address,
+        oracle: Address,
+        active: bool,
+    ) -> Result<(), VoucherError> {
+        Self::require_admin(&env, &caller)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::Oracle(oracle.clone()), &active);
+        OracleSetEvent { oracle, active }.publish(&env);
+        Ok(())
+    }
+
+    pub fn is_oracle(env: Env, oracle: Address) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Oracle(oracle))
+            .unwrap_or(false)
+    }
+
+    fn require_oracle(env: &Env, caller: &Address) -> Result<(), VoucherError> {
+        caller.require_auth();
+        if !Self::is_oracle(env.clone(), caller.clone()) {
+            return Err(VoucherError::NotOracle);
+        }
+        Ok(())
+    }
+
+    /// Oracle-only: publishes a `flagged` event for `merchant`. Does NOT
+    /// touch `MerchantProfile` — an admin decides whether to actually act
+    /// on the flag via `set_merchant`.
+    pub fn flag_merchant(
+        env: Env,
+        caller: Address,
+        merchant: Address,
+        reason: Symbol,
+    ) -> Result<(), VoucherError> {
+        Self::require_oracle(&env, &caller)?;
+        FlaggedEvent {
+            merchant,
+            caller,
+            reason,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Oracle-only: publishes an `anomaly` event carrying a 0-100 score for
+    /// `voucher_id`. Does NOT freeze the voucher — see the module doc above.
+    pub fn post_anomaly(
+        env: Env,
+        caller: Address,
+        voucher_id: u32,
+        score: u32,
+        reason: Symbol,
+    ) -> Result<(), VoucherError> {
+        Self::require_oracle(&env, &caller)?;
+        if !env.storage().instance().has(&DataKey::Voucher(voucher_id)) {
+            return Err(VoucherError::NotFound);
+        }
+        AnomalyEvent {
+            voucher_id,
+            caller,
+            score,
+            reason,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------
     // Queries
     // ------------------------------------------------------------------
 
@@ -761,5 +878,76 @@ mod test {
         );
         let v = client.can_redeem(&23, &recipient, &merchant, &10);
         assert_eq!(v.spent, 0);
+    }
+
+    #[test]
+    fn oracle_role_is_admin_gated_and_revocable() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (admin, _, _, client) = setup(&env);
+        let scanner = Address::generate(&env);
+
+        assert!(!client.is_oracle(&scanner));
+        client.set_oracle(&admin, &scanner, &true);
+        assert!(client.is_oracle(&scanner));
+        client.set_oracle(&admin, &scanner, &false);
+        assert!(!client.is_oracle(&scanner));
+    }
+
+    #[test]
+    fn non_admin_cannot_grant_oracle_role() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, _, _, client) = setup(&env);
+        let not_admin = Address::generate(&env);
+        let scanner = Address::generate(&env);
+
+        let res = client.try_set_oracle(&not_admin, &scanner, &true);
+        assert_eq!(res.unwrap_err().unwrap(), VoucherError::NotAdmin);
+    }
+
+    #[test]
+    fn only_a_granted_oracle_can_flag_a_merchant_or_post_an_anomaly() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (admin, _, contract_id, client) = setup(&env);
+        let scanner = Address::generate(&env);
+        let impostor = Address::generate(&env);
+        let merchant = Address::generate(&env);
+        let recipient = Address::generate(&env);
+
+        seed_voucher(
+            &env,
+            &contract_id,
+            42,
+            &sample_voucher(&env, recipient, 100, 0),
+        );
+
+        // Not yet granted the role — both calls are rejected.
+        let reason = Symbol::new(&env, "sybil");
+        let res = client.try_flag_merchant(&impostor, &merchant, &reason);
+        assert_eq!(res.unwrap_err().unwrap(), VoucherError::NotOracle);
+        let res = client.try_post_anomaly(&impostor, &42, &80, &reason);
+        assert_eq!(res.unwrap_err().unwrap(), VoucherError::NotOracle);
+
+        // Grant the role, then both calls succeed — and are purely
+        // informational: `is_merchant` and `voucher_info` are unchanged.
+        client.set_oracle(&admin, &scanner, &true);
+        client.flag_merchant(&scanner, &merchant, &reason);
+        client.post_anomaly(&scanner, &42, &80, &reason);
+        assert!(!client.is_merchant(&merchant));
+        assert!(!client.voucher_info(&42).unwrap().frozen);
+    }
+
+    #[test]
+    fn post_anomaly_rejects_an_unknown_voucher() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (admin, _, _, client) = setup(&env);
+        let scanner = Address::generate(&env);
+        client.set_oracle(&admin, &scanner, &true);
+
+        let res = client.try_post_anomaly(&scanner, &999, &50, &Symbol::new(&env, "velocity"));
+        assert_eq!(res.unwrap_err().unwrap(), VoucherError::NotFound);
     }
 }

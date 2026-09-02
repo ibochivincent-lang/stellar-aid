@@ -62,6 +62,39 @@ describe('decodeContractEvent', () => {
     }
   });
 
+  it('decodes an oracle_set event', () => {
+    const raw = fakeEvent(['oracle_set'], ['GSCANNER', true]);
+    const event = decodeContractEvent(raw);
+    expect(event.type).toBe('oracle_set');
+    if (event.type === 'oracle_set') {
+      expect(event.data.oracle).toBe('GSCANNER');
+      expect(event.data.active).toBe(true);
+    }
+  });
+
+  it('decodes a flagged event (topic[1] is the merchant address, not a voucher id)', () => {
+    const raw = fakeEvent(['flagged', 'GMERCHANT'], ['GSCANNER', 'sybil']);
+    const event = decodeContractEvent(raw);
+    expect(event.type).toBe('flagged');
+    if (event.type === 'flagged') {
+      expect(event.data.merchant).toBe('GMERCHANT');
+      expect(event.data.oracle).toBe('GSCANNER');
+      expect(event.data.reason).toBe('sybil');
+    }
+  });
+
+  it('decodes an anomaly event', () => {
+    const raw = fakeEvent(['anomaly', 42], ['GSCANNER', 87, 'velocity']);
+    const event = decodeContractEvent(raw);
+    expect(event.type).toBe('anomaly');
+    if (event.type === 'anomaly') {
+      expect(event.data.voucherId).toBe(42);
+      expect(event.data.oracle).toBe('GSCANNER');
+      expect(event.data.score).toBe(87);
+      expect(event.data.reason).toBe('velocity');
+    }
+  });
+
   it('falls back to an unknown event for an unrecognized topic', () => {
     const raw = fakeEvent(['some_future_event', 1], ['x']);
     const event = decodeContractEvent(raw);
