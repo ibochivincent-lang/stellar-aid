@@ -43,6 +43,21 @@ breakdown in `docs/issues.md`; point labels (`trivial-100` / `medium-150` /
       every push/PR.
 - [x] Repo skeleton: `.gitignore`, initial git history, LICENSE,
       CONTRIBUTING.md, SECURITY.md.
+- [x] Deployment path unblocked: initial Prisma migration committed
+      (`backend/prisma/migrations/20260902004500_init/` — hand-written and
+      verified by applying it directly against a real local Postgres with
+      `psql`, since this environment can't reach `binaries.prisma.sh` to run
+      `prisma migrate dev` itself; `prisma migrate deploy` on a real machine
+      just applies it normally), `backend/Dockerfile` (multi-stage,
+      `prisma migrate deploy && node dist/main` as its `CMD`), and a root
+      `docker-compose.yml` (Postgres-with-pgvector + the backend, for local/
+      offline dev). Full instructions — including the "no `CROP_CONTRACT_ID`/
+      `TICKET_CONTRACT_ID` in this project, only `AID_VOUCHER_CONTRACT_ID`"
+      correction, and why the container's self-migrating `CMD` is a
+      single-instance-only choice — in `DEPLOYMENT.md`. Still open: a
+      provider-specific CI deploy step (deliberately left unbuilt — depends
+      on which host gets picked) and a dedicated health-check route (`GET
+      /api/vouchers` stands in for one today).
 
 ## Phase 1 — Privacy and compliance primitives (`high-200` / `medium-150`)
 

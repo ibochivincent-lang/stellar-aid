@@ -89,9 +89,10 @@ Soroban RPC's ~7-day retention window.
 
 ```bash
 cd contracts
-cargo build --target wasm32-unknown-unknown --release
+# soroban-sdk 26 requires wasm32v1-none on Rust 1.84+ (rustup target add wasm32v1-none)
+cargo build --target wasm32v1-none --release
 cargo test                # unit tests (testutils)
-stellar contract deploy --wasm target/wasm32-unknown-unknown/release/stellar_aid.wasm
+stellar contract deploy --wasm target/wasm32v1-none/release/stellar_aid.wasm
 ```
 
 ## Backend

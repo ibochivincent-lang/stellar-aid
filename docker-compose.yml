@@ -1,0 +1,80 @@
+# Local development stack: Postgres + the backend API.
+#
+# `docker compose up` gets a fresh Postgres (with pgvector, for the AI
+# assistant's optional semantic search — see backend/src/ai/vector-store.service.ts)
+# and the backend running against it, migrated on start. This is the "Local +
+# Docker — first boot" option from DEPLOYMENT.md; Neon/Railway/Supabase are
+# the recommended path for anything beyond a laptop.
+#
+# The contract itself is NOT started by this file — Soroban contracts don't
+# run in a container, they're deployed once to testnet/mainnet (see
+# DEPLOYMENT.md "Contracts"). Set AID_VOUCHER_CONTRACT_ID below to whatever
+# `stellar contract deploy` returned.
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: stellar_aid
+      POSTGRES_PASSWORD: stellar_aid
+      POSTGRES_DB: stellar_aid
+    ports:
+      - '5432:5432'
+    volumes:
+      - stellar-aid-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U stellar_aid -d stellar_aid']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - '3000:3000'
+    environment:
+      DATABASE_URL: postgresql://stellar_aid:stellar_aid@db:5432/stellar_aid
+      PORT: 3000
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
+      STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
+      STELLAR_HORIZON_URL: ${STELLAR_HORIZON_URL:-https://horizon-testnet.stellar.org}
+      STELLAR_RPC_URL: ${STELLAR_RPC_URL:-https://soroban-testnet.stellar.org}
+      STELLAR_NETWORK_PASSPHRASE: ${STELLAR_NETWORK_PASSPHRASE:-Test SDF Network ; September 2015}
+      STELLAR_SIGNING_SECRET: ${STELLAR_SIGNING_SECRET:?set STELLAR_SIGNING_SECRET in your .env — see backend/.env.example}
+      AID_VOUCHER_CONTRACT_ID: ${AID_VOUCHER_CONTRACT_ID:-}
+      USDC_TOKEN_CONTRACT_ID: ${USDC_TOKEN_CONTRACT_ID:-}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in your .env — see backend/.env.example}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:?set ADMIN_PASSWORD_HASH in your .env — see backend/.env.example}
+      EVENTS_POLL_INTERVAL_MS: ${EVENTS_POLL_INTERVAL_MS:-5000}
+      EVENTS_PAGE_LIMIT: ${EVENTS_PAGE_LIMIT:-100}
+      X402_VERIFIER_URL: ${X402_VERIFIER_URL:-}
+      X402_PRICE_ENDPOINT: ${X402_PRICE_ENDPOINT:-/data/aid-summary}
+      X402_PRICE_AMOUNT: ${X402_PRICE_AMOUNT:-0.01}
+      X402_PRICE_ASSET: ${X402_PRICE_ASSET:-USDC}
+      X402_CHAT_PRICE_AMOUNT: ${X402_CHAT_PRICE_AMOUNT:-0.01}
+      AI_PROVIDER: ${AI_PROVIDER:-openai}
+      AI_MODEL: ${AI_MODEL:-gpt-4o-mini}
+      AI_TEMPERATURE: ${AI_TEMPERATURE:-0.2}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_ENABLE_VECTOR_SEARCH: ${AI_ENABLE_VECTOR_SEARCH:-false}
+      AI_EMBEDDINGS_PROVIDER: ${AI_EMBEDDINGS_PROVIDER:-openai}
+      AI_EMBEDDINGS_MODEL: ${AI_EMBEDDINGS_MODEL:-text-embedding-3-small}
+      AID_ORACLE_SIGNING_SECRET: ${AID_ORACLE_SIGNING_SECRET:-}
+      FRAUD_RAPID_REDEMPTION_SECONDS: ${FRAUD_RAPID_REDEMPTION_SECONDS:-30}
+      FRAUD_MERCHANT_VELOCITY_WINDOW_MS: ${FRAUD_MERCHANT_VELOCITY_WINDOW_MS:-60000}
+      FRAUD_MERCHANT_VELOCITY_THRESHOLD: ${FRAUD_MERCHANT_VELOCITY_THRESHOLD:-10}
+      FRAUD_RECIPIENT_FANOUT_WINDOW_MS: ${FRAUD_RECIPIENT_FANOUT_WINDOW_MS:-3600000}
+      FRAUD_RECIPIENT_FANOUT_THRESHOLD: ${FRAUD_RECIPIENT_FANOUT_THRESHOLD:-5}
+      FRAUD_FLAG_COOLDOWN_MS: ${FRAUD_FLAG_COOLDOWN_MS:-600000}
+
+volumes:
+  stellar-aid-db:

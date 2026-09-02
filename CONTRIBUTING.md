@@ -17,10 +17,14 @@ current breakdown and `ROADMAP.md` for how issues map to phases.
 
 ```
 stellar-aid/
-├── contracts/   # Soroban smart contract (Rust)
-├── backend/     # NestJS API + event delivery + webhooks
-├── frontend/    # Client SDKs (early)
-└── docs/        # Wave issue breakdown + design docs for not-yet-built items
+├── contracts/          # Soroban smart contract (Rust)
+├── backend/            # NestJS API + event delivery + webhooks
+│   ├── Dockerfile      # multi-stage build → `node dist/main` (prod)
+│   └── prisma/migrations/  # committed — `prisma migrate deploy` applies these
+├── frontend/           # Client SDKs (early)
+├── docs/               # Wave issue breakdown + design docs for not-yet-built items
+├── docker-compose.yml  # local dev: Postgres (+pgvector) + the backend
+└── DEPLOYMENT.md       # contract/DB/backend/frontend deploy instructions
 ```
 
 ## Working on the contract (`contracts/`)
@@ -29,7 +33,7 @@ stellar-aid/
 cd contracts
 cargo test                                        # unit tests
 cargo fmt --all                                    # format before committing
-cargo build --target wasm32-unknown-unknown --release
+cargo build --target wasm32v1-none --release    # soroban-sdk 26 requires this target, not wasm32-unknown-unknown
 ```
 
 CI runs `cargo fmt --all -- --check`, `cargo test`, and the wasm32 release
@@ -53,9 +57,17 @@ cp .env.example .env      # fill in DATABASE_URL, JWT_SECRET, ADMIN_USERNAME/
                            # ADMIN_PASSWORD_HASH, Stellar keys — see the
                            # comments in .env.example for how to generate each
 npx prisma generate
-npx prisma migrate dev
+npx prisma migrate dev    # applies the committed migrations; only prompts
+                           # for a new one if you've since edited schema.prisma
 npm run start:dev
 ```
+
+No local Postgres handy? `docker compose up db` from the repo root starts
+just the database (with pgvector already installed) without also building
+the backend image — point `DATABASE_URL` at
+`postgresql://stellar_aid:stellar_aid@localhost:5432/stellar_aid` and run
+the block above as normal. See `DEPLOYMENT.md` for the full deploy story
+(contract, database, backend, frontend) beyond local dev.
 
 Before opening a PR:
 
